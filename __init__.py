@@ -24,7 +24,7 @@ from .losses import (
 )
 from .trainer import MFCT_GAN_Trainer
 from .inference import MFCT_GAN_Inferencer, inference_single_sample
-from .dataset import create_dataloaders, LIDCIDRI_Dataset, SyntheticDataset
+from .dataset import create_dataloaders, LIDCIDRI_Dataset, SyntheticDataset, DRR_PatientDataset
 from .config import Config, ModelConfig, TrainingConfig, DataConfig, ExperimentConfig
 
 __version__ = '1.0.0'
@@ -52,6 +52,7 @@ __all__ = [
     'create_dataloaders',
     'LIDCIDRI_Dataset',
     'SyntheticDataset',
+    'DRR_PatientDataset',
     'Config',
     'ModelConfig',
     'TrainingConfig',

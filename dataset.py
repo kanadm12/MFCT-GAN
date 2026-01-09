@@ -8,6 +8,8 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import os
 from pathlib import Path
+import nibabel as nib
+from PIL import Image
 
 
 class LIDCIDRI_Dataset(Dataset):
@@ -181,21 +183,27 @@ def create_dataloaders(
     batch_size=4,
     num_workers=0,
     use_synthetic=False,
+    use_drr_patient_data=False,
     num_synthetic_samples=100,
     x_ray_size=128,
     ct_volume_size=128,
+    train_val_split=0.8,
+    vertical_flip=True,
 ):
     """
     Create dataloaders for training and validation
     
     Args:
-        data_dir: Directory containing real dataset
+        data_dir: Directory containing dataset
         batch_size: Batch size for dataloaders
         num_workers: Number of worker processes
         use_synthetic: Whether to use synthetic dataset (for testing)
+        use_drr_patient_data: Whether to use DRR patient data format
         num_synthetic_samples: Number of synthetic samples if use_synthetic=True
         x_ray_size: Size of X-ray images
         ct_volume_size: Size of CT volume
+        train_val_split: Train/val split ratio (default: 0.8)
+        vertical_flip: Whether to vertically flip DRRs (only for DRR patient data)
         
     Returns:
         train_loader: DataLoader for training
@@ -213,8 +221,26 @@ def create_dataloaders(
             x_ray_size=x_ray_size,
             ct_volume_size=ct_volume_size
         )
+    elif use_drr_patient_data:
+        # Load DRR patient data
+        train_dataset = DRR_PatientDataset(
+            data_dir=data_dir,
+            x_ray_size=x_ray_size,
+            ct_volume_size=ct_volume_size,
+            split='train',
+            train_val_split=train_val_split,
+            vertical_flip=vertical_flip,
+        )
+        val_dataset = DRR_PatientDataset(
+            data_dir=data_dir,
+            x_ray_size=x_ray_size,
+            ct_volume_size=ct_volume_size,
+            split='val',
+            train_val_split=train_val_split,
+            vertical_flip=vertical_flip,
+        )
     else:
-        # Load real datasets
+        # Load real datasets (LIDC-IDRI format)
         train_dataset = LIDCIDRI_Dataset(
             data_dir=data_dir,
             x_ray_size=x_ray_size,
@@ -233,6 +259,7 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
+        pin_memory=True if num_workers > 0 else False,
     )
     
     val_loader = DataLoader(
@@ -240,6 +267,7 @@ def create_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
+        pin_memory=True if num_workers > 0 else False,
     )
     
     return train_loader, val_loader

@@ -66,9 +66,12 @@ def main(args):
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         use_synthetic=args.use_synthetic,
+        use_drr_patient_data=args.use_drr_patient_data,
         num_synthetic_samples=args.num_synthetic_samples,
         x_ray_size=args.x_ray_size,
         ct_volume_size=args.ct_volume_size,
+        train_val_split=args.train_val_split,
+        vertical_flip=args.vertical_flip,
     )
     
     print(f"Train batches: {len(train_loader)}")
@@ -128,12 +131,18 @@ if __name__ == '__main__':
                         help='Path to dataset directory')
     parser.add_argument('--use_synthetic', action='store_true',
                         help='Use synthetic dataset for testing')
+    parser.add_argument('--use_drr_patient_data', action='store_true',
+                        help='Use DRR patient data format (runpod structure)')
     parser.add_argument('--num_synthetic_samples', type=int, default=100,
                         help='Number of synthetic samples')
     parser.add_argument('--x_ray_size', type=int, default=128,
                         help='Size of X-ray images')
     parser.add_argument('--ct_volume_size', type=int, default=128,
                         help='Size of CT volume')
+    parser.add_argument('--vertical_flip', action='store_true', default=True,
+                        help='Vertically flip DRR images during training')
+    parser.add_argument('--train_val_split', type=float, default=0.8,
+                        help='Train/validation split ratio')
     
     # Checkpoint and logging
     parser.add_argument('--checkpoint', type=str, default=None,
