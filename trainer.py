@@ -84,6 +84,12 @@ class MFCT_GAN_Trainer:
         # Logging
         self.writer = None
         self.global_step = 0
+        
+        # Best model tracking
+        self.best_psnr = -float('inf')
+        self.best_ssim = -float('inf')
+        self.best_psnr_epoch = 0
+        self.best_ssim_epoch = 0
 
     def init_tensorboard(self, log_dir='./runs'):
         """Initialize TensorBoard writer"""
@@ -342,11 +348,36 @@ class MFCT_GAN_Trainer:
                 print(f"  PSNR: {val_losses['psnr']:.4f} dB")
                 print(f"  SSIM: {val_losses['ssim']:.4f}")
                 print(f"{'='*50}\n")
+                
+                # Save best models
+                current_psnr = val_losses['psnr']
+                current_ssim = val_losses['ssim']
+                
+                if current_psnr > self.best_psnr:
+                    self.best_psnr = current_psnr
+                    self.best_psnr_epoch = epoch
+                    best_psnr_path = os.path.join(checkpoint_dir, 'best_psnr_model.pt')
+                    self.save_checkpoint(best_psnr_path, epoch)
+                    print(f"✓ New best PSNR: {current_psnr:.4f} dB (saved to best_psnr_model.pt)\n")
+                
+                if current_ssim > self.best_ssim:
+                    self.best_ssim = current_ssim
+                    self.best_ssim_epoch = epoch
+                    best_ssim_path = os.path.join(checkpoint_dir, 'best_ssim_model.pt')
+                    self.save_checkpoint(best_ssim_path, epoch)
+                    print(f"✓ New best SSIM: {current_ssim:.4f} (saved to best_ssim_model.pt)\n")
             
-            # Save checkpoint
+            # Save checkpoint every 10 epochs
             if (epoch + 1) % 10 == 0:
                 checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pt')
                 self.save_checkpoint(checkpoint_path, epoch)
+        
+        # Print final summary
+        print(f"\n{'='*60}")
+        print(f"Training Complete!")
+        print(f"Best PSNR: {self.best_psnr:.4f} dB at epoch {self.best_psnr_epoch}")
+        print(f"Best SSIM: {self.best_ssim:.4f} at epoch {self.best_ssim_epoch}")
+        print(f"{'='*60}\n")
         
         if self.writer:
             self.writer.close()
