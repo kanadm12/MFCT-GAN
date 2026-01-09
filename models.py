@@ -279,51 +279,57 @@ class Decoder3D(nn.Module):
     """3D Decoder for upsampling and feature reconstruction
     Based on architecture diagram with Basic3D blocks and upsampling
     Input: (B, C, 16, 16, 16) -> Output: (B, 1, 128, 128, 128)
-    Uses interpolation + conv instead of ConvTranspose3d for memory efficiency
+    Reduces channels BEFORE upsampling for memory efficiency
     """
     def __init__(self, in_channels=128, base_channels=64):
         super(Decoder3D, self).__init__()
 
-        # Progressive upsampling: 16 -> 32 -> 64 -> 128
-        # Layer 1: 16 -> 32
-        self.conv1 = nn.Conv3d(in_channels, base_channels * 2, kernel_size=3, padding=1)
-        self.norm1 = nn.BatchNorm3d(base_channels * 2)
-        self.basic3d_1 = Basic3DBlock(base_channels * 2, base_channels * 2)
+        # Reduce channels progressively BEFORE upsampling
+        # Layer 1: Reduce channels, then upsample 16->32
+        self.reduce1 = nn.Sequential(
+            nn.Conv3d(in_channels, base_channels, kernel_size=1),
+            nn.BatchNorm3d(base_channels),
+            nn.ReLU(inplace=True)
+        )
+        self.basic3d_1 = Basic3DBlock(base_channels, base_channels)
 
-        # Layer 2: 32 -> 64
-        self.conv2 = nn.Conv3d(base_channels * 2, base_channels, kernel_size=3, padding=1)
-        self.norm2 = nn.BatchNorm3d(base_channels)
-        self.basic3d_2 = Basic3DBlock(base_channels, base_channels)
+        # Layer 2: Reduce channels, then upsample 32->64
+        self.reduce2 = nn.Sequential(
+            nn.Conv3d(base_channels, base_channels // 2, kernel_size=1),
+            nn.BatchNorm3d(base_channels // 2),
+            nn.ReLU(inplace=True)
+        )
+        self.basic3d_2 = Basic3DBlock(base_channels // 2, base_channels // 2)
 
-        # Layer 3: 64 -> 128
-        self.conv3 = nn.Conv3d(base_channels, base_channels // 2, kernel_size=3, padding=1)
-        self.norm3 = nn.BatchNorm3d(base_channels // 2)
-        self.basic3d_3 = Basic3DBlock(base_channels // 2, base_channels // 2)
+        # Layer 3: Reduce channels, then upsample 64->128
+        self.reduce3 = nn.Sequential(
+            nn.Conv3d(base_channels // 2, base_channels // 4, kernel_size=1),
+            nn.BatchNorm3d(base_channels // 4),
+            nn.ReLU(inplace=True)
+        )
+        self.basic3d_3 = Basic3DBlock(base_channels // 4, base_channels // 4)
 
         # Final convolution to get single channel output
         self.final = nn.Sequential(
-            nn.Conv3d(base_channels // 2, base_channels // 4, kernel_size=3, padding=1),
-            nn.BatchNorm3d(base_channels // 4),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(base_channels // 4, 1, kernel_size=1, padding=0),
+            nn.Conv3d(base_channels // 4, 1, kernel_size=1),
             nn.Tanh()  # Output in range [-1, 1]
         )
 
     def forward(self, x):
-        # Layer 1: Upsample 16->32 + Conv + Basic3D
-        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
-        x = F.relu(self.norm1(self.conv1(x)))
+        # Layer 1: Reduce channels, Basic3D, then Upsample 16->32
+        x = self.reduce1(x)
         x = self.basic3d_1(x)
-        
-        # Layer 2: Upsample 32->64 + Conv + Basic3D
         x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
-        x = F.relu(self.norm2(self.conv2(x)))
+        
+        # Layer 2: Reduce channels, Basic3D, then Upsample 32->64
+        x = self.reduce2(x)
         x = self.basic3d_2(x)
-        
-        # Layer 3: Upsample 64->128 + Conv + Basic3D
         x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
-        x = F.relu(self.norm3(self.conv3(x)))
+        
+        # Layer 3: Reduce channels, Basic3D, then Upsample 64->128
+        x = self.reduce3(x)
         x = self.basic3d_3(x)
+        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
         
         # Final convolution
         x = self.final(x)
