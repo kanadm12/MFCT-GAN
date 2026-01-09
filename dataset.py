@@ -165,6 +165,7 @@ class DRR_PatientDataset(Dataset):
         split='train',
         train_val_split=0.8,
         vertical_flip=True,
+        max_patients=None,
         transform=None,
     ):
         """
@@ -175,6 +176,7 @@ class DRR_PatientDataset(Dataset):
             split: 'train' or 'val'
             train_val_split: Train/validation split ratio (default: 0.8)
             vertical_flip: Whether to vertically flip DRR images (default: True)
+            max_patients: Maximum number of patients to use (None = use all)
             transform: Optional transform to apply to data
         """
         self.data_dir = Path(data_dir)
@@ -183,6 +185,7 @@ class DRR_PatientDataset(Dataset):
         self.split = split
         self.train_val_split = train_val_split
         self.vertical_flip = vertical_flip
+        self.max_patients = max_patients
         self.transform = transform
         
         # Load file lists
@@ -200,6 +203,10 @@ class DRR_PatientDataset(Dataset):
         
         # Get all patient directories
         patient_dirs = sorted([d for d in self.data_dir.iterdir() if d.is_dir()])
+        
+        # Limit to max_patients if specified
+        if self.max_patients is not None:
+            patient_dirs = patient_dirs[:self.max_patients]
         
         # Split into train/val
         split_idx = int(len(patient_dirs) * self.train_val_split)
@@ -359,6 +366,7 @@ def create_dataloaders(
     ct_volume_size=128,
     train_val_split=0.8,
     vertical_flip=True,
+    max_patients=None,
 ):
     """
     Create dataloaders for training and validation
@@ -400,6 +408,7 @@ def create_dataloaders(
             split='train',
             train_val_split=train_val_split,
             vertical_flip=vertical_flip,
+            max_patients=max_patients,
         )
         val_dataset = DRR_PatientDataset(
             data_dir=data_dir,
@@ -408,6 +417,7 @@ def create_dataloaders(
             split='val',
             train_val_split=train_val_split,
             vertical_flip=vertical_flip,
+            max_patients=max_patients,
         )
     else:
         # Load real datasets (LIDC-IDRI format)

@@ -72,6 +72,7 @@ def main(args):
         ct_volume_size=args.ct_volume_size,
         train_val_split=args.train_val_split,
         vertical_flip=args.vertical_flip,
+        max_patients=args.max_patients,
     )
     
     print(f"Train batches: {len(train_loader)}")
@@ -143,6 +144,8 @@ if __name__ == '__main__':
                         help='Vertically flip DRR images during training')
     parser.add_argument('--train_val_split', type=float, default=0.8,
                         help='Train/validation split ratio')
+    parser.add_argument('--max_patients', type=int, default=None,
+                        help='Maximum number of patients to use (None = use all)')
     
     # Checkpoint and logging
     parser.add_argument('--checkpoint', type=str, default=None,

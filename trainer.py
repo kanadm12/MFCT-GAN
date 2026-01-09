@@ -9,6 +9,36 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import os
 from datetime import datetime
+import numpy as np
+
+
+def calculate_psnr(img1, img2, max_val=1.0):
+    """Calculate Peak Signal-to-Noise Ratio between two images"""
+    mse = torch.mean((img1 - img2) ** 2)
+    if mse == 0:
+        return float('inf')
+    psnr = 20 * torch.log10(max_val / torch.sqrt(mse))
+    return psnr.item()
+
+
+def calculate_ssim(img1, img2, window_size=11, max_val=1.0):
+    """Calculate Structural Similarity Index between two images"""
+    c1 = (0.01 * max_val) ** 2
+    c2 = (0.03 * max_val) ** 2
+    
+    # Simple SSIM calculation (averaged over batch and spatial dimensions)
+    mu1 = torch.mean(img1)
+    mu2 = torch.mean(img2)
+    mu1_sq = mu1 ** 2
+    mu2_sq = mu2 ** 2
+    mu1_mu2 = mu1 * mu2
+    
+    sigma1_sq = torch.mean(img1 ** 2) - mu1_sq
+    sigma2_sq = torch.mean(img2 ** 2) - mu2_sq
+    sigma12 = torch.mean(img1 * img2) - mu1_mu2
+    
+    ssim = ((2 * mu1_mu2 + c1) * (2 * sigma12 + c2)) / ((mu1_sq + mu2_sq + c1) * (sigma1_sq + sigma2_sq + c2))
+    return ssim.item()
 
 
 class MFCT_GAN_Trainer:
@@ -194,7 +224,7 @@ class MFCT_GAN_Trainer:
             val_loader: DataLoader for validation data
             
         Returns:
-            avg_loss_dict: Dictionary with average validation losses
+            avg_loss_dict: Dictionary with average validation losses and metrics
         """
         self.generator.eval()
         self.discriminator.eval()
@@ -203,6 +233,10 @@ class MFCT_GAN_Trainer:
             'g_total', 'g_lsgan', 'g_projection', 'g_reconstruction', 
             'g_subjective', 'd_total', 'd_real', 'd_fake'
         ]}
+        
+        total_psnr = 0
+        total_ssim = 0
+        num_samples = 0
         
         with torch.no_grad():
             pbar = tqdm(val_loader, desc='Validation')
@@ -213,6 +247,14 @@ class MFCT_GAN_Trainer:
                 
                 # Generate fake CT
                 fake_ct = self.generator(x_ray1, x_ray2)
+                
+                # Calculate PSNR and SSIM
+                for i in range(fake_ct.shape[0]):
+                    psnr = calculate_psnr(fake_ct[i], ct_volume[i])
+                    ssim = calculate_ssim(fake_ct[i], ct_volume[i])
+                    total_psnr += psnr
+                    total_ssim += ssim
+                    num_samples += 1
                 
                 # Discriminator outputs
                 discriminator_real = self.discriminator(ct_volume)
@@ -235,9 +277,11 @@ class MFCT_GAN_Trainer:
                 val_losses['d_real'] += loss_d_dict['real'].item()
                 val_losses['d_fake'] += loss_d_dict['fake'].item()
         
-        # Calculate average losses
+        # Calculate average losses and metrics
         num_batches = len(val_loader)
         avg_loss_dict = {key: value / num_batches for key, value in val_losses.items()}
+        avg_loss_dict['psnr'] = total_psnr / num_samples
+        avg_loss_dict['ssim'] = total_ssim / num_samples
         
         return avg_loss_dict
 
@@ -291,6 +335,13 @@ class MFCT_GAN_Trainer:
                     print(f"  {key}: {value:.6f}")
                     if self.writer:
                         self.writer.add_scalar(f'Val_Loss/{key}', value, epoch)
+                
+                # Print metrics prominently
+                print(f"\n{'='*50}")
+                print(f"Epoch {epoch} Metrics:")
+                print(f"  PSNR: {val_losses['psnr']:.4f} dB")
+                print(f"  SSIM: {val_losses['ssim']:.4f}")
+                print(f"{'='*50}\n")
             
             # Save checkpoint
             if (epoch + 1) % 10 == 0:
