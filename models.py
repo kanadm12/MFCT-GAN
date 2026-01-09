@@ -163,28 +163,30 @@ class Encoder2D(nn.Module):
 
 
 class TransitionBlock(nn.Module):
-    """Transition block with fully connected layer to convert 2D features to 3D"""
-    def __init__(self, in_channels=256, spatial_size=16, output_depth=128):
+    """Transition block to convert 2D features to 3D using 3D convolution"""
+    def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
         self.in_channels = in_channels
         self.spatial_size = spatial_size
-        self.output_depth = output_depth
-
-        # Flatten and reshape dimensions
-        flattened_size = in_channels * spatial_size * spatial_size
-        self.fc = nn.Linear(flattened_size, output_depth * 32 * 32 * 4)
-        self.norm = nn.BatchNorm1d(output_depth * 32 * 32 * 4)
+        self.output_channels = output_channels
+        
+        # Use 3D convolution to expand 2D to 3D
+        # Treat 2D feature as single slice and expand with 3D conv
+        self.expand_conv = nn.Sequential(
+            nn.Conv3d(in_channels, output_channels, kernel_size=(1, 3, 3), padding=(0, 1, 1)),
+            nn.BatchNorm3d(output_channels),
+            nn.ReLU(inplace=True),
+        )
 
     def forward(self, x):
         batch_size = x.shape[0]
-        # Flatten
-        x = x.view(batch_size, -1)
-        # Fully connected layer
-        x = self.fc(x)
-        x = self.norm(x)
-        x = F.relu(x)
-        # Reshape to 3D
-        x = x.view(batch_size, self.output_depth, 32, 32, 4)
+        # Add depth dimension: (B, C, H, W) -> (B, C, 1, H, W)
+        x = x.unsqueeze(2)
+        # Expand with 3D convolution
+        x = self.expand_conv(x)
+        # Repeat along depth dimension to get initial 3D volume
+        # (B, C, 1, H, W) -> (B, C, D, H, W) where D matches spatial size
+        x = x.repeat(1, 1, self.spatial_size, 1, 1)
         return x
 
 
@@ -362,17 +364,17 @@ class MFCT_GAN_Generator(nn.Module):
 
         # Transition blocks for 2D to 3D conversion
         self.transition1 = TransitionBlock(
-            in_channels=base_channels * 8, spatial_size=16, output_depth=128
+            in_channels=base_channels * 8, spatial_size=16, output_channels=base_channels * 4
         )
         self.transition2 = TransitionBlock(
-            in_channels=base_channels * 8, spatial_size=16, output_depth=128
+            in_channels=base_channels * 8, spatial_size=16, output_channels=base_channels * 4
         )
 
         # Skip Connection Modification module
-        self.scm = SkipConnectionModification(in_channels=128)
+        self.scm = SkipConnectionModification(in_channels=base_channels * 4)
 
         # Feature fusion and 3D decoder
-        self.decoder_3d = Decoder3D(in_channels=128, base_channels=base_channels * 2)
+        self.decoder_3d = Decoder3D(in_channels=base_channels * 4, base_channels=base_channels * 2)
 
     def forward(self, x_ray1, x_ray2):
         """
