@@ -415,9 +415,15 @@ class MFCT_GAN_Generator(nn.Module):
 
 
 class PatchDiscriminator3D(nn.Module):
-    """Modified PatchGAN Discriminator with 3D convolutional modules"""
-    def __init__(self, in_channels=1, base_channels=64):
+    """Modified PatchGAN Discriminator with 3D convolutional modules
+    Adaptive to different volume sizes
+    """
+    def __init__(self, in_channels=1, base_channels=64, volume_size=128):
         super(PatchDiscriminator3D, self).__init__()
+        
+        # Calculate number of downsampling layers based on volume size
+        import math
+        num_layers = max(3, int(math.log2(volume_size)) - 2)  # At least 3 layers
 
         def conv3d_block(in_ch, out_ch, stride=1, padding=1):
             return nn.Sequential(
@@ -426,24 +432,26 @@ class PatchDiscriminator3D(nn.Module):
                 nn.LeakyReLU(0.2, inplace=True),
             )
 
-        self.layer1 = conv3d_block(in_channels, base_channels, stride=2)
-        self.layer2 = conv3d_block(base_channels, base_channels * 2, stride=2)
-        self.layer3 = conv3d_block(base_channels * 2, base_channels * 4, stride=2)
-        self.layer4 = conv3d_block(base_channels * 4, base_channels * 8, stride=2)
+        # Build layers dynamically
+        self.layers = nn.ModuleList()
+        current_channels = in_channels
+        
+        for i in range(num_layers):
+            next_channels = base_channels * (2 ** min(i, 3))  # Cap at base_channels * 8
+            self.layers.append(conv3d_block(current_channels, next_channels, stride=2))
+            current_channels = next_channels
 
         # Patch discriminator output
-        self.final = nn.Conv3d(base_channels * 8, 1, kernel_size=4, stride=1, padding=1)
+        self.final = nn.Conv3d(current_channels, 1, kernel_size=4, stride=1, padding=1)
 
     def forward(self, x):
         """
         Args:
-            x: 3D volume (B, 1, 128, 128, 128)
+            x: 3D volume (B, 1, D, H, W)
         Returns:
             discriminator_output: Patch-wise discrimination scores
         """
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
+        for layer in self.layers:
+            x = layer(x)
         x = self.final(x)
         return x

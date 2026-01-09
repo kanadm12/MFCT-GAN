@@ -30,7 +30,11 @@ def main(args):
         base_channels=args.base_channels,
         ct_volume_size=args.ct_volume_size
     )
-    discriminator = PatchDiscriminator3D(in_channels=1, base_channels=args.base_channels)
+    discriminator = PatchDiscriminator3D(
+        in_channels=1, 
+        base_channels=args.base_channels,
+        volume_size=args.ct_volume_size
+    )
     
     # Print model info
     print(f"Generator parameters: {sum(p.numel() for p in generator.parameters()):,}")
