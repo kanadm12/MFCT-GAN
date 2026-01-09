@@ -142,6 +142,176 @@ class LIDCIDRI_Dataset(Dataset):
         return volume
 
 
+class DRR_PatientDataset(Dataset):
+    """
+    Dataset class for DRR patient data from runpod
+    Loads CT volumes (.nii.gz) and corresponding DRR images (.png)
+    Applies vertical flip to DRR images during training
+    
+    Expected structure:
+        data_dir/
+        ├── patient_id_1/
+        │   ├── patient_id_1.nii.gz
+        │   ├── patient_id_1_pa_drr.png
+        │   └── patient_id_1_lat_drr.png
+        └── patient_id_2/
+            └── ...
+    """
+    def __init__(
+        self,
+        data_dir,
+        x_ray_size=128,
+        ct_volume_size=128,
+        split='train',
+        train_val_split=0.8,
+        vertical_flip=True,
+        transform=None,
+    ):
+        """
+        Args:
+            data_dir: Directory containing patient folders
+            x_ray_size: Size of DRR images (H, W) - default 128
+            ct_volume_size: Size of CT volume (D, H, W) - default 128
+            split: 'train' or 'val'
+            train_val_split: Train/validation split ratio (default: 0.8)
+            vertical_flip: Whether to vertically flip DRR images (default: True)
+            transform: Optional transform to apply to data
+        """
+        self.data_dir = Path(data_dir)
+        self.x_ray_size = x_ray_size
+        self.ct_volume_size = ct_volume_size
+        self.split = split
+        self.train_val_split = train_val_split
+        self.vertical_flip = vertical_flip
+        self.transform = transform
+        
+        # Load file lists
+        self.samples = self._load_samples()
+        
+        print(f"Loaded {len(self.samples)} samples for {split} split")
+        
+    def _load_samples(self):
+        """Load sample file paths from patient directories"""
+        samples = []
+        
+        if not self.data_dir.exists():
+            print(f"Warning: Data directory {self.data_dir} does not exist")
+            return samples
+        
+        # Get all patient directories
+        patient_dirs = sorted([d for d in self.data_dir.iterdir() if d.is_dir()])
+        
+        # Split into train/val
+        split_idx = int(len(patient_dirs) * self.train_val_split)
+        if self.split == 'train':
+            patient_dirs = patient_dirs[:split_idx]
+        else:
+            patient_dirs = patient_dirs[split_idx:]
+        
+        # Load samples from each patient directory
+        for patient_dir in patient_dirs:
+            patient_id = patient_dir.name
+            
+            # Define expected file paths
+            ct_path = patient_dir / f"{patient_id}.nii.gz"
+            pa_drr_path = patient_dir / f"{patient_id}_pa_drr.png"
+            lat_drr_path = patient_dir / f"{patient_id}_lat_drr.png"
+            
+            # Check if all files exist
+            if ct_path.exists() and pa_drr_path.exists() and lat_drr_path.exists():
+                samples.append({
+                    'ct_volume': ct_path,
+                    'pa_drr': pa_drr_path,
+                    'lat_drr': lat_drr_path,
+                })
+            else:
+                print(f"Warning: Missing files for patient {patient_id}")
+        
+        return samples
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, idx):
+        """
+        Args:
+            idx: Index of sample
+            
+        Returns:
+            pa_drr: PA (posterior-anterior) DRR image (1, H, W)
+            lat_drr: Lateral DRR image (1, H, W)
+            ct_volume: CT volume (1, D, H, W)
+        """
+        sample_dict = self.samples[idx]
+        
+        # Load CT volume from .nii.gz
+        ct_nifti = nib.load(str(sample_dict['ct_volume']))
+        ct_volume = ct_nifti.get_fdata().astype(np.float32)
+        
+        # Load DRR images from .png
+        pa_drr = np.array(Image.open(sample_dict['pa_drr']).convert('L')).astype(np.float32)
+        lat_drr = np.array(Image.open(sample_dict['lat_drr']).convert('L')).astype(np.float32)
+        
+        # Apply vertical flip if enabled
+        if self.vertical_flip:
+            pa_drr = np.flipud(pa_drr)
+            lat_drr = np.flipud(lat_drr)
+        
+        # Resize images and volumes
+        pa_drr = self._resize_2d(pa_drr, self.x_ray_size)
+        lat_drr = self._resize_2d(lat_drr, self.x_ray_size)
+        ct_volume = self._resize_3d(ct_volume, self.ct_volume_size)
+        
+        # Add channel dimension
+        pa_drr = np.expand_dims(pa_drr, axis=0)
+        lat_drr = np.expand_dims(lat_drr, axis=0)
+        ct_volume = np.expand_dims(ct_volume, axis=0)
+        
+        # Normalize to [0, 1]
+        pa_drr = (pa_drr - pa_drr.min()) / (pa_drr.max() - pa_drr.min() + 1e-8)
+        lat_drr = (lat_drr - lat_drr.min()) / (lat_drr.max() - lat_drr.min() + 1e-8)
+        ct_volume = (ct_volume - ct_volume.min()) / (ct_volume.max() - ct_volume.min() + 1e-8)
+        
+        # Apply transforms if any
+        if self.transform:
+            pa_drr = self.transform(pa_drr)
+            lat_drr = self.transform(lat_drr)
+            ct_volume = self.transform(ct_volume)
+        
+        # Convert to tensors
+        pa_drr = torch.from_numpy(pa_drr)
+        lat_drr = torch.from_numpy(lat_drr)
+        ct_volume = torch.from_numpy(ct_volume)
+        
+        return pa_drr, lat_drr, ct_volume
+    
+    @staticmethod
+    def _resize_2d(img, target_size):
+        """Resize 2D image to target size"""
+        if isinstance(target_size, int):
+            target_size = (target_size, target_size)
+        
+        if img.shape != target_size:
+            from scipy import ndimage
+            zoom_factors = (target_size[0] / img.shape[0], target_size[1] / img.shape[1])
+            img = ndimage.zoom(img, zoom_factors, order=1)
+        
+        return img
+    
+    @staticmethod
+    def _resize_3d(volume, target_size):
+        """Resize 3D volume to target size"""
+        if isinstance(target_size, int):
+            target_size = (target_size, target_size, target_size)
+        
+        if volume.shape != target_size:
+            from scipy import ndimage
+            zoom_factors = tuple(target_size[i] / volume.shape[i] for i in range(3))
+            volume = ndimage.zoom(volume, zoom_factors, order=1)
+        
+        return volume
+
+
 class SyntheticDataset(Dataset):
     """
     Synthetic dataset for testing purposes
