@@ -26,7 +26,10 @@ def main(args):
     
     # Create model
     print("Creating MFCT-GAN models...")
-    generator = MFCT_GAN_Generator(base_channels=args.base_channels)
+    generator = MFCT_GAN_Generator(
+        base_channels=args.base_channels,
+        ct_volume_size=args.ct_volume_size
+    )
     discriminator = PatchDiscriminator3D(in_channels=1, base_channels=args.base_channels)
     
     # Print model info

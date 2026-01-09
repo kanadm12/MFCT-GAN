@@ -277,59 +277,51 @@ class Basic3DBlock(nn.Module):
 
 class Decoder3D(nn.Module):
     """3D Decoder for upsampling and feature reconstruction
-    Based on architecture diagram with Basic3D blocks and upsampling
-    Input: (B, C, 16, 16, 16) -> Output: (B, 1, 128, 128, 128)
+    Flexible output size based on target_size parameter
     Reduces channels BEFORE upsampling for memory efficiency
     """
-    def __init__(self, in_channels=128, base_channels=64):
+    def __init__(self, in_channels=128, base_channels=64, target_size=128):
         super(Decoder3D, self).__init__()
-
-        # Reduce channels progressively BEFORE upsampling
-        # Layer 1: Reduce channels, then upsample 16->32
-        self.reduce1 = nn.Sequential(
-            nn.Conv3d(in_channels, base_channels, kernel_size=1),
-            nn.BatchNorm3d(base_channels),
-            nn.ReLU(inplace=True)
-        )
-        self.basic3d_1 = Basic3DBlock(base_channels, base_channels)
-
-        # Layer 2: Reduce channels, then upsample 32->64
-        self.reduce2 = nn.Sequential(
-            nn.Conv3d(base_channels, base_channels // 2, kernel_size=1),
-            nn.BatchNorm3d(base_channels // 2),
-            nn.ReLU(inplace=True)
-        )
-        self.basic3d_2 = Basic3DBlock(base_channels // 2, base_channels // 2)
-
-        # Layer 3: Reduce channels, then upsample 64->128
-        self.reduce3 = nn.Sequential(
-            nn.Conv3d(base_channels // 2, base_channels // 4, kernel_size=1),
-            nn.BatchNorm3d(base_channels // 4),
-            nn.ReLU(inplace=True)
-        )
-        self.basic3d_3 = Basic3DBlock(base_channels // 4, base_channels // 4)
-
+        
+        self.target_size = target_size
+        # Calculate number of upsampling stages needed (from 16 to target_size)
+        import math
+        self.num_upsamples = int(math.log2(target_size // 16))
+        
+        # Build decoder layers dynamically
+        self.layers = nn.ModuleList()
+        current_channels = in_channels
+        
+        for i in range(self.num_upsamples):
+            next_channels = max(base_channels // (2 ** i), 4)
+            
+            # Reduce channels
+            reduce = nn.Sequential(
+                nn.Conv3d(current_channels, next_channels, kernel_size=1),
+                nn.BatchNorm3d(next_channels),
+                nn.ReLU(inplace=True)
+            )
+            basic3d = Basic3DBlock(next_channels, next_channels)
+            
+            self.layers.append(nn.ModuleDict({
+                'reduce': reduce,
+                'basic3d': basic3d
+            }))
+            
+            current_channels = next_channels
+        
         # Final convolution to get single channel output
         self.final = nn.Sequential(
-            nn.Conv3d(base_channels // 4, 1, kernel_size=1),
+            nn.Conv3d(current_channels, 1, kernel_size=1),
             nn.Tanh()  # Output in range [-1, 1]
         )
 
     def forward(self, x):
-        # Layer 1: Reduce channels, Basic3D, then Upsample 16->32
-        x = self.reduce1(x)
-        x = self.basic3d_1(x)
-        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
-        
-        # Layer 2: Reduce channels, Basic3D, then Upsample 32->64
-        x = self.reduce2(x)
-        x = self.basic3d_2(x)
-        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
-        
-        # Layer 3: Reduce channels, Basic3D, then Upsample 64->128
-        x = self.reduce3(x)
-        x = self.basic3d_3(x)
-        x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
+        # Progressive upsampling with channel reduction
+        for layer_dict in self.layers:
+            x = layer_dict['reduce'](x)
+            x = layer_dict['basic3d'](x)
+            x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
         
         # Final convolution
         x = self.final(x)
@@ -361,9 +353,10 @@ class DualParallelEncoder(nn.Module):
 
 class MFCT_GAN_Generator(nn.Module):
     """MFCT-GAN Generator: Complete architecture for 3D CT reconstruction"""
-    def __init__(self, base_channels=32):
+    def __init__(self, base_channels=32, ct_volume_size=128):
         super(MFCT_GAN_Generator, self).__init__()
         self.base_channels = base_channels
+        self.ct_volume_size = ct_volume_size
 
         # Dual-parallel encoders
         self.dual_encoder = DualParallelEncoder(base_channels=base_channels)
@@ -380,7 +373,11 @@ class MFCT_GAN_Generator(nn.Module):
         self.scm = SkipConnectionModification(in_channels=base_channels * 4)
 
         # Feature fusion and 3D decoder
-        self.decoder_3d = Decoder3D(in_channels=base_channels * 4, base_channels=base_channels)
+        self.decoder_3d = Decoder3D(
+            in_channels=base_channels * 4, 
+            base_channels=base_channels,
+            target_size=ct_volume_size
+        )
 
     def forward(self, x_ray1, x_ray2):
         """
