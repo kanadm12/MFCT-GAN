@@ -278,37 +278,39 @@ class Basic3DBlock(nn.Module):
 class Decoder3D(nn.Module):
     """3D Decoder for upsampling and feature reconstruction
     Based on architecture diagram with Basic3D blocks and upsampling
+    Input: (B, C, 16, 16, 16) -> Output: (B, 1, 128, 128, 128)
     """
-    def __init__(self, in_channels=256, base_channels=64):
+    def __init__(self, in_channels=128, base_channels=64):
         super(Decoder3D, self).__init__()
 
-        # Decoder layer 1 with upsampling
+        # Progressive upsampling: 16 -> 32 -> 64 -> 128
+        # Layer 1: 16 -> 32
         self.upsample1 = nn.ConvTranspose3d(
-            in_channels, base_channels * 4, 
+            in_channels, base_channels * 2, 
             kernel_size=4, stride=2, padding=1
         )
-        self.basic3d_1 = Basic3DBlock(base_channels * 4, base_channels * 4)
+        self.basic3d_1 = Basic3DBlock(base_channels * 2, base_channels * 2)
 
-        # Decoder layer 2 with upsampling
+        # Layer 2: 32 -> 64
         self.upsample2 = nn.ConvTranspose3d(
-            base_channels * 4, base_channels * 2, 
-            kernel_size=4, stride=2, padding=1
-        )
-        self.basic3d_2 = Basic3DBlock(base_channels * 2, base_channels * 2)
-
-        # Decoder layer 3 with upsampling
-        self.upsample3 = nn.ConvTranspose3d(
             base_channels * 2, base_channels, 
             kernel_size=4, stride=2, padding=1
         )
-        self.basic3d_3 = Basic3DBlock(base_channels, base_channels)
+        self.basic3d_2 = Basic3DBlock(base_channels, base_channels)
+
+        # Layer 3: 64 -> 128
+        self.upsample3 = nn.ConvTranspose3d(
+            base_channels, base_channels // 2, 
+            kernel_size=4, stride=2, padding=1
+        )
+        self.basic3d_3 = Basic3DBlock(base_channels // 2, base_channels // 2)
 
         # Final convolution to get single channel output
         self.final = nn.Sequential(
-            nn.Conv3d(base_channels, base_channels // 2, kernel_size=3, padding=1),
-            nn.BatchNorm3d(base_channels // 2),
+            nn.Conv3d(base_channels // 2, base_channels // 4, kernel_size=3, padding=1),
+            nn.BatchNorm3d(base_channels // 4),
             nn.ReLU(inplace=True),
-            nn.Conv3d(base_channels // 2, 1, kernel_size=1, padding=0),
+            nn.Conv3d(base_channels // 4, 1, kernel_size=1, padding=0),
             nn.Tanh()  # Output in range [-1, 1]
         )
 
@@ -374,7 +376,7 @@ class MFCT_GAN_Generator(nn.Module):
         self.scm = SkipConnectionModification(in_channels=base_channels * 4)
 
         # Feature fusion and 3D decoder
-        self.decoder_3d = Decoder3D(in_channels=base_channels * 4, base_channels=base_channels * 2)
+        self.decoder_3d = Decoder3D(in_channels=base_channels * 4, base_channels=base_channels)
 
     def forward(self, x_ray1, x_ray2):
         """
