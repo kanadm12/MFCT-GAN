@@ -325,6 +325,12 @@ class Decoder3D(nn.Module):
         
         # Final convolution
         x = self.final(x)
+        
+        # Ensure exact target size (in case of rounding issues)
+        if x.shape[-1] != self.target_size:
+            x = F.interpolate(x, size=(self.target_size, self.target_size, self.target_size), 
+                            mode='trilinear', align_corners=False)
+        
         return x
 
 
