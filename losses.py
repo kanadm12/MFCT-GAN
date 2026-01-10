@@ -162,13 +162,15 @@ class SubjectiveLoss(nn.Module):
 
 
 class MFCT_GAN_Loss(nn.Module):
-    """Total MFCT-GAN loss function combining all four loss components"""
-    def __init__(self, alpha1=0.1, alpha2=10.0, alpha3=50.0, alpha4=10.0, ssim_weight=0.9):
+    """Total MFCT-GAN loss function combining all four loss components
+    Loss weights as specified in MFCT-GAN paper
+    """
+    def __init__(self, alpha1=0.1, alpha2=8.0, alpha3=8.0, alpha4=2.0, ssim_weight=0.9):
         super(MFCT_GAN_Loss, self).__init__()
-        self.alpha1 = alpha1  # LSGAN weight (adversarial) - keep low for stability
-        self.alpha2 = alpha2  # Projection weight (geometric correctness) - increased
-        self.alpha3 = alpha3  # Reconstruction weight (L1 detail) - significantly increased
-        self.alpha4 = alpha4  # Subjective weight (SSIM quality) - significantly increased
+        self.alpha1 = alpha1  # LSGAN weight (adversarial) - paper: 0.1
+        self.alpha2 = alpha2  # Projection weight (geometric) - paper: 8.0
+        self.alpha3 = alpha3  # Reconstruction weight (L1) - paper: 8.0
+        self.alpha4 = alpha4  # Subjective weight (SSIM) - paper: 2.0
 
         self.lsgan_loss = LSGANLoss()
         self.projection_loss = ProjectionLoss()

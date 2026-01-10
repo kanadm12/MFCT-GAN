@@ -163,30 +163,39 @@ class Encoder2D(nn.Module):
 
 
 class TransitionBlock(nn.Module):
-    """Transition block to convert 2D features to 3D using 3D convolution"""
+    """Transition block to convert 2D features to 3D using fully connected layer
+    As specified in MFCT-GAN paper: flatten -> FC -> reshape to 3D
+    """
     def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
         self.in_channels = in_channels
         self.spatial_size = spatial_size
         self.output_channels = output_channels
         
-        # Use 3D convolution to expand 2D to 3D
-        # Treat 2D feature as single slice and expand with 3D conv
-        self.expand_conv = nn.Sequential(
-            nn.Conv3d(in_channels, output_channels, kernel_size=(1, 3, 3), padding=(0, 1, 1)),
-            nn.BatchNorm3d(output_channels),
-            nn.ReLU(inplace=True),
+        # Calculate flattened size (from 2D features at spatial_size)
+        self.flatten_size = in_channels * spatial_size * spatial_size
+        
+        # Calculate target 3D size
+        self.target_3d_size = output_channels * spatial_size * spatial_size * spatial_size
+        
+        # Fully connected layer as specified in paper
+        self.fc = nn.Sequential(
+            nn.Linear(self.flatten_size, self.target_3d_size),
+            nn.ReLU(inplace=True)
         )
 
     def forward(self, x):
         batch_size = x.shape[0]
-        # Add depth dimension: (B, C, H, W) -> (B, C, 1, H, W)
-        x = x.unsqueeze(2)
-        # Expand with 3D convolution
-        x = self.expand_conv(x)
-        # Repeat along depth dimension to get initial 3D volume
-        # (B, C, 1, H, W) -> (B, C, D, H, W) where D matches spatial size
-        x = x.repeat(1, 1, self.spatial_size, 1, 1)
+        
+        # Flatten 2D features: (B, C, H, W) -> (B, C*H*W)
+        x = x.view(batch_size, -1)
+        
+        # Fully connected layer
+        x = self.fc(x)
+        
+        # Reshape to 3D: (B, C*D*H*W) -> (B, C, D, H, W)
+        x = x.view(batch_size, self.output_channels, self.spatial_size, self.spatial_size, self.spatial_size)
+        
         return x
 
 
@@ -428,43 +437,43 @@ class MFCT_GAN_Generator(nn.Module):
 
 
 class PatchDiscriminator3D(nn.Module):
-    """Modified PatchGAN Discriminator with 3D convolutional modules
-    Adaptive to different volume sizes
+    """PatchGAN Discriminator as specified in MFCT-GAN paper
+    Uses kernel size 5×3 three times, followed by kernel size 5×1
     """
     def __init__(self, in_channels=1, base_channels=64, volume_size=128):
         super(PatchDiscriminator3D, self).__init__()
         
-        # Calculate number of downsampling layers based on volume size
-        import math
-        num_layers = max(3, int(math.log2(volume_size)) - 2)  # At least 3 layers
-
-        def conv3d_block(in_ch, out_ch, stride=1, padding=1):
+        # As specified in paper: kernel size 5×3 (interpreted as 5×5×5 with stride 3)
+        # followed by kernel size 5×1 (interpreted as 5×5×5 with stride 1)
+        
+        def conv3d_block(in_ch, out_ch, kernel_size=5, stride=2, padding=2):
             return nn.Sequential(
-                nn.Conv3d(in_ch, out_ch, kernel_size=4, stride=stride, padding=padding),
+                nn.Conv3d(in_ch, out_ch, kernel_size=kernel_size, stride=stride, padding=padding),
                 nn.BatchNorm3d(out_ch),
                 nn.LeakyReLU(0.2, inplace=True),
             )
-
-        # Build layers dynamically
-        self.layers = nn.ModuleList()
-        current_channels = in_channels
         
-        for i in range(num_layers):
-            next_channels = base_channels * (2 ** min(i, 3))  # Cap at base_channels * 8
-            self.layers.append(conv3d_block(current_channels, next_channels, stride=2))
-            current_channels = next_channels
-
-        # Patch discriminator output
-        self.final = nn.Conv3d(current_channels, 1, kernel_size=4, stride=1, padding=1)
+        # Three layers with kernel 5, stride 2 (paper says "5×3" likely meaning stride 3)
+        self.layer1 = conv3d_block(in_channels, base_channels, kernel_size=5, stride=2, padding=2)
+        self.layer2 = conv3d_block(base_channels, base_channels * 2, kernel_size=5, stride=2, padding=2)
+        self.layer3 = conv3d_block(base_channels * 2, base_channels * 4, kernel_size=5, stride=2, padding=2)
+        
+        # One layer with kernel 5, stride 1 (paper says "5×1")
+        self.layer4 = conv3d_block(base_channels * 4, base_channels * 8, kernel_size=5, stride=1, padding=2)
+        
+        # Final patch discriminator output
+        self.final = nn.Conv3d(base_channels * 8, 1, kernel_size=5, stride=1, padding=2)
 
     def forward(self, x):
         """
         Args:
             x: 3D volume (B, 1, D, H, W)
         Returns:
-            discriminator_output: Patch-wise discrimination scores
-        """
-        for layer in self.layers:
-            x = layer(x)
+            Discriminator output (patch-level predictions)
+        \"\"\"
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
         x = self.final(x)
         return x
