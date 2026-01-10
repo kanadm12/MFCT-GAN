@@ -224,13 +224,17 @@ class DRR_PatientDataset(Dataset):
             pa_drr_path = patient_dir / f"{patient_id}_pa_drr.png"
             lat_drr_path = patient_dir / f"{patient_id}_lat_drr.png"
             
-            # Check if all files exist
+            # Check if all files exist and CT file is not empty
             if ct_path.exists() and pa_drr_path.exists() and lat_drr_path.exists():
-                samples.append({
-                    'ct_volume': ct_path,
-                    'pa_drr': pa_drr_path,
-                    'lat_drr': lat_drr_path,
-                })
+                # Verify CT file is not empty/corrupted
+                if ct_path.stat().st_size > 0:
+                    samples.append({
+                        'ct_volume': ct_path,
+                        'pa_drr': pa_drr_path,
+                        'lat_drr': lat_drr_path,
+                    })
+                else:
+                    print(f"Warning: Empty/corrupted CT file for patient {patient_id}")
             else:
                 print(f"Warning: Missing files for patient {patient_id}")
         
@@ -251,9 +255,13 @@ class DRR_PatientDataset(Dataset):
         """
         sample_dict = self.samples[idx]
         
-        # Load CT volume from .nii.gz
-        ct_nifti = nib.load(str(sample_dict['ct_volume']))
-        ct_volume = ct_nifti.get_fdata().astype(np.float32)
+        # Load CT volume from .nii.gz with error handling
+        try:
+            ct_nifti = nib.load(str(sample_dict['ct_volume']))
+            ct_volume = ct_nifti.get_fdata().astype(np.float32)
+        except Exception as e:
+            print(f"Error loading CT file {sample_dict['ct_volume']}: {e}")
+            raise
         
         # Load DRR images from .png
         pa_drr = np.array(Image.open(sample_dict['pa_drr']).convert('L')).astype(np.float32)
