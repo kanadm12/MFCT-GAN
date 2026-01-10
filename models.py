@@ -165,6 +165,7 @@ class Encoder2D(nn.Module):
 class TransitionBlock(nn.Module):
     """Transition block to convert 2D features to 3D using fully connected layer
     As specified in MFCT-GAN paper: flatten -> FC -> reshape to 3D
+    Uses bottleneck FC for memory efficiency
     """
     def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
@@ -178,9 +179,15 @@ class TransitionBlock(nn.Module):
         # Calculate target 3D size
         self.target_3d_size = output_channels * spatial_size * spatial_size * spatial_size
         
-        # Fully connected layer as specified in paper
+        # Use bottleneck FC to reduce memory (still maintains FC architecture from paper)
+        # Bottleneck dimension: sqrt of target size for balanced compression
+        bottleneck_dim = max(4096, int((self.flatten_size * self.target_3d_size) ** 0.5) // 32)
+        
+        # Fully connected layers with bottleneck
         self.fc = nn.Sequential(
-            nn.Linear(self.flatten_size, self.target_3d_size),
+            nn.Linear(self.flatten_size, bottleneck_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(bottleneck_dim, self.target_3d_size),
             nn.ReLU(inplace=True)
         )
 
