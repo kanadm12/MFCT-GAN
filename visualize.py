@@ -211,15 +211,40 @@ def main(args):
     
     print("Prediction complete!")
     
-    # Calculate metrics
+    # Calculate metrics on original resolution
     psnr = calculate_psnr(ct_pred, ct_gt)
     ssim = calculate_ssim(ct_pred, ct_gt)
+    
+    # Upscale volumes if requested
+    if args.upscale_size and args.upscale_size > args.ct_volume_size:
+        print(f"\nUpscaling volumes from {args.ct_volume_size}³ to {args.upscale_size}³...")
+        import torch.nn.functional as F
+        
+        ct_gt_upscaled = F.interpolate(
+            ct_gt, 
+            size=(args.upscale_size, args.upscale_size, args.upscale_size),
+            mode='trilinear',
+            align_corners=False
+        )
+        ct_pred_upscaled = F.interpolate(
+            ct_pred,
+            size=(args.upscale_size, args.upscale_size, args.upscale_size),
+            mode='trilinear',
+            align_corners=False
+        )
+        
+        print(f"Upscaling complete!")
+        print(f"  Original size: {ct_gt.shape}")
+        print(f"  Upscaled size: {ct_gt_upscaled.shape}")
+    else:
+        ct_gt_upscaled = ct_gt
+        ct_pred_upscaled = ct_pred
     
     print(f"\nMetrics:")
     print(f"  PSNR: {psnr:.4f} dB")
     print(f"  SSIM: {ssim:.4f}")
     
-    # Visualize
+    # Visualize (use original resolution for display)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
     
@@ -232,24 +257,25 @@ def main(args):
     
     # Save volumes as .npy and .nii.gz
     if args.save_volumes:
-        ct_gt_np = ct_gt[0].cpu().numpy()
-        ct_pred_np = ct_pred[0].cpu().numpy()
+        ct_gt_save = ct_gt_upscaled[0].cpu().numpy()
+        ct_pred_save = ct_pred_upscaled[0].cpu().numpy()
         
         # Save as numpy arrays
-        np.save(output_dir / f'ct_gt_sample_{idx}.npy', ct_gt_np)
-        np.save(output_dir / f'ct_pred_sample_{idx}.npy', ct_pred_np)
+        np.save(output_dir / f'ct_gt_sample_{idx}.npy', ct_gt_save)
+        np.save(output_dir / f'ct_pred_sample_{idx}.npy', ct_pred_save)
         
         # Save as NIfTI files for medical imaging software (3D Slicer, ITK-SNAP, etc.)
         # Remove channel dimension and convert to proper orientation
-        ct_gt_nifti = nib.Nifti1Image(ct_gt_np.squeeze(), affine=np.eye(4))
-        ct_pred_nifti = nib.Nifti1Image(ct_pred_np.squeeze(), affine=np.eye(4))
+        ct_gt_nifti = nib.Nifti1Image(ct_gt_save.squeeze(), affine=np.eye(4))
+        ct_pred_nifti = nib.Nifti1Image(ct_pred_save.squeeze(), affine=np.eye(4))
         
         nib.save(ct_gt_nifti, str(output_dir / f'ct_gt_sample_{idx}.nii.gz'))
         nib.save(ct_pred_nifti, str(output_dir / f'ct_pred_sample_{idx}.nii.gz'))
         
+        volume_size = ct_gt_save.squeeze().shape[0]
         print(f"\nVolumes saved to {output_dir}")
-        print(f"  - Ground truth: ct_gt_sample_{idx}.nii.gz")
-        print(f"  - Predicted: ct_pred_sample_{idx}.nii.gz")
+        print(f"  - Ground truth: ct_gt_sample_{idx}.nii.gz ({volume_size}³)")
+        print(f"  - Predicted: ct_pred_sample_{idx}.nii.gz ({volume_size}³)")
         print(f"  - View in 3D Slicer, ITK-SNAP, or other NIfTI viewers")
 
 
@@ -263,6 +289,8 @@ if __name__ == '__main__':
                         help='Base number of channels in the model')
     parser.add_argument('--ct_volume_size', type=int, default=64,
                         help='Size of CT volume')
+    parser.add_argument('--upscale_size', type=int, default=256,
+                        help='Upscale output volumes to this size (default: 256)')
     
     # Data arguments
     parser.add_argument('--data_dir', type=str, default='./drr_patient_data',
