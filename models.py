@@ -316,12 +316,17 @@ class Decoder3D(nn.Module):
             nn.Tanh()  # Output in range [-1, 1]
         )
 
-    def forward(self, x):
-        # Progressive upsampling with channel reduction
-        for layer_dict in self.layers:
+    def forward(self, x, skip_connections=None):
+        # Progressive upsampling with channel reduction and optional skip connections
+        for i, layer_dict in enumerate(self.layers):
             x = layer_dict['reduce'](x)
             x = layer_dict['basic3d'](x)
             x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
+            
+            # Add skip connections if provided (from encoder)
+            # Note: Skip connections would need to be converted to 3D and matched in size
+            # For now, we keep the architecture working without them for stability
+            # TODO: Properly integrate skip connections from 2D encoder
         
         # Final convolution
         x = self.final(x)
@@ -397,15 +402,17 @@ class MFCT_GAN_Generator(nn.Module):
         bn1, bn2, skip1, skip2 = self.dual_encoder(x_ray1, x_ray2)
 
         # Convert 2D features to 3D through transition blocks
-        features_3d_1 = self.transition1(bn1)  # (B, 128, 32, 32, 4)
-        features_3d_2 = self.transition2(bn2)  # (B, 128, 32, 32, 4)
+        features_3d_1 = self.transition1(bn1)
+        features_3d_2 = self.transition2(bn2)
 
-        # Expand spatial dimensions
+        # Expand spatial dimensions to match initial decoder input size (16x16x16)
+        # The decoder will then progressively upsample to ct_volume_size
+        initial_size = 16
         features_3d_1 = F.interpolate(
-            features_3d_1, size=(128, 128, 128), mode="trilinear", align_corners=False
+            features_3d_1, size=(initial_size, initial_size, initial_size), mode="trilinear", align_corners=False
         )
         features_3d_2 = F.interpolate(
-            features_3d_2, size=(128, 128, 128), mode="trilinear", align_corners=False
+            features_3d_2, size=(initial_size, initial_size, initial_size), mode="trilinear", align_corners=False
         )
 
         # Apply Skip Connection Modification using second X-ray as weight map
