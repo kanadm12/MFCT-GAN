@@ -470,7 +470,7 @@ class PatchDiscriminator3D(nn.Module):
             x: 3D volume (B, 1, D, H, W)
         Returns:
             Discriminator output (patch-level predictions)
-        \"\"\"
+        """
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
