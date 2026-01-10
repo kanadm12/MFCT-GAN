@@ -179,9 +179,10 @@ class TransitionBlock(nn.Module):
         # Calculate target 3D size
         self.target_3d_size = output_channels * spatial_size * spatial_size * spatial_size
         
-        # Use larger bottleneck (4096) for better detail preservation
+        # Use large bottleneck (16384) for maximum detail preservation
         # Balances memory efficiency with reconstruction quality
-        bottleneck_dim = 4096
+        # 4× larger than previous (4096) for better spatial information flow
+        bottleneck_dim = 16384
         
         # Fully connected layers with bottleneck
         self.fc = nn.Sequential(
