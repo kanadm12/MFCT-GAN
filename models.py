@@ -179,14 +179,15 @@ class TransitionBlock(nn.Module):
         # Calculate target 3D size
         self.target_3d_size = output_channels * spatial_size * spatial_size * spatial_size
         
-        # Use bottleneck FC to reduce memory (still maintains FC architecture from paper)
-        # Bottleneck dimension: sqrt of target size for balanced compression
-        bottleneck_dim = max(4096, int((self.flatten_size * self.target_3d_size) ** 0.5) // 32)
+        # Use small fixed bottleneck (512-2048) for memory efficiency
+        # This is necessary to match paper's 48M total parameter count
+        bottleneck_dim = 1024  # Fixed reasonable size
         
         # Fully connected layers with bottleneck
         self.fc = nn.Sequential(
             nn.Linear(self.flatten_size, bottleneck_dim),
             nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
             nn.Linear(bottleneck_dim, self.target_3d_size),
             nn.ReLU(inplace=True)
         )
