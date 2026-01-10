@@ -5,6 +5,7 @@ Training utilities and trainer class for MFCT-GAN
 import torch
 import torch.optim as optim
 import torch.nn as nn
+from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import os
@@ -53,6 +54,7 @@ class MFCT_GAN_Trainer:
         learning_rate_d=0.0002,
         beta1=0.5,
         beta2=0.999,
+        use_amp=False,
     ):
         """
         Args:
@@ -80,6 +82,11 @@ class MFCT_GAN_Trainer:
             lr=learning_rate_d,
             betas=(beta1, beta2)
         )
+        
+        # Mixed precision training
+        self.use_amp = use_amp
+        self.scaler_g = GradScaler(enabled=use_amp)
+        self.scaler_d = GradScaler(enabled=use_amp)
         
         # Logging
         self.writer = None
@@ -123,23 +130,27 @@ class MFCT_GAN_Trainer:
         
         # Generate fake CT volume
         with torch.no_grad():
-            fake_ct = self.generator(x_ray1, x_ray2)
+            with autocast(enabled=self.use_amp):
+                fake_ct = self.generator(x_ray1, x_ray2)
         
-        # Discriminator for real data
-        discriminator_real = self.discriminator(ct_volume)
+        # Forward pass with AMP
+        with autocast(enabled=self.use_amp):
+            # Discriminator for real data
+            discriminator_real = self.discriminator(ct_volume)
+            
+            # Discriminator for fake data
+            discriminator_fake = self.discriminator(fake_ct.detach())
+            
+            # Calculate discriminator loss
+            loss_d, loss_d_dict = self.loss_fn.discriminator_loss(
+                discriminator_real, discriminator_fake
+            )
         
-        # Discriminator for fake data
-        discriminator_fake = self.discriminator(fake_ct.detach())
-        
-        # Calculate discriminator loss
-        loss_d, loss_d_dict = self.loss_fn.discriminator_loss(
-            discriminator_real, discriminator_fake
-        )
-        
-        # Update discriminator
+        # Update discriminator with gradient scaling
         self.optimizer_d.zero_grad()
-        loss_d.backward()
-        self.optimizer_d.step()
+        self.scaler_d.scale(loss_d).backward()
+        self.scaler_d.step(self.optimizer_d)
+        self.scaler_d.update()
         
         # ============================================
         # Train Generator
@@ -147,21 +158,24 @@ class MFCT_GAN_Trainer:
         self.generator.train()
         self.discriminator.eval()
         
-        # Generate fake CT volume
-        fake_ct = self.generator(x_ray1, x_ray2)
+        # Forward pass with AMP
+        with autocast(enabled=self.use_amp):
+            # Generate fake CT volume
+            fake_ct = self.generator(x_ray1, x_ray2)
+            
+            # Discriminator output for fake data
+            discriminator_fake = self.discriminator(fake_ct)
+            
+            # Calculate generator loss
+            loss_g, loss_g_dict = self.loss_fn.generator_loss(
+                discriminator_fake, fake_ct, ct_volume
+            )
         
-        # Discriminator output for fake data
-        discriminator_fake = self.discriminator(fake_ct)
-        
-        # Calculate generator loss
-        loss_g, loss_g_dict = self.loss_fn.generator_loss(
-            discriminator_fake, fake_ct, ct_volume
-        )
-        
-        # Update generator
+        # Update generator with gradient scaling
         self.optimizer_g.zero_grad()
-        loss_g.backward()
-        self.optimizer_g.step()
+        self.scaler_g.scale(loss_g).backward()
+        self.scaler_g.step(self.optimizer_g)
+        self.scaler_g.update()
         
         # Combine loss dictionaries
         loss_dict = {

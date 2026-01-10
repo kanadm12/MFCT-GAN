@@ -59,6 +59,7 @@ def main(args):
         learning_rate_d=args.lr_d,
         beta1=args.beta1,
         beta2=args.beta2,
+        use_amp=args.use_amp,
     )
     
     # Load checkpoint if provided
@@ -111,6 +112,8 @@ if __name__ == '__main__':
                         help='Batch size for training')
     parser.add_argument('--num_workers', type=int, default=0,
                         help='Number of data loading workers')
+    parser.add_argument('--use_amp', action='store_true',
+                        help='Use automatic mixed precision (FP16) training for memory efficiency')
     
     # Learning rate and optimizer arguments
     parser.add_argument('--lr_g', type=float, default=0.0002,
