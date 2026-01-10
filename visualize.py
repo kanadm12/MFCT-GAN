@@ -10,6 +10,7 @@ import argparse
 import os
 import random
 from pathlib import Path
+import nibabel as nib
 
 from models import MFCT_GAN_Generator
 from dataset import DRR_PatientDataset
@@ -229,11 +230,27 @@ def main(args):
         save_path=str(save_path)
     )
     
-    # Optionally save volumes as .npy
+    # Save volumes as .npy and .nii.gz
     if args.save_volumes:
-        np.save(output_dir / f'ct_gt_sample_{idx}.npy', ct_gt[0].cpu().numpy())
-        np.save(output_dir / f'ct_pred_sample_{idx}.npy', ct_pred[0].cpu().numpy())
+        ct_gt_np = ct_gt[0].cpu().numpy()
+        ct_pred_np = ct_pred[0].cpu().numpy()
+        
+        # Save as numpy arrays
+        np.save(output_dir / f'ct_gt_sample_{idx}.npy', ct_gt_np)
+        np.save(output_dir / f'ct_pred_sample_{idx}.npy', ct_pred_np)
+        
+        # Save as NIfTI files for medical imaging software (3D Slicer, ITK-SNAP, etc.)
+        # Remove channel dimension and convert to proper orientation
+        ct_gt_nifti = nib.Nifti1Image(ct_gt_np.squeeze(), affine=np.eye(4))
+        ct_pred_nifti = nib.Nifti1Image(ct_pred_np.squeeze(), affine=np.eye(4))
+        
+        nib.save(ct_gt_nifti, str(output_dir / f'ct_gt_sample_{idx}.nii.gz'))
+        nib.save(ct_pred_nifti, str(output_dir / f'ct_pred_sample_{idx}.nii.gz'))
+        
         print(f"\nVolumes saved to {output_dir}")
+        print(f"  - Ground truth: ct_gt_sample_{idx}.nii.gz")
+        print(f"  - Predicted: ct_pred_sample_{idx}.nii.gz")
+        print(f"  - View in 3D Slicer, ITK-SNAP, or other NIfTI viewers")
 
 
 if __name__ == '__main__':
