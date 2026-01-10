@@ -179,10 +179,10 @@ class TransitionBlock(nn.Module):
         # Calculate target 3D size
         self.target_3d_size = output_channels * spatial_size * spatial_size * spatial_size
         
-        # Use balanced bottleneck (8192) for 128^3 training on H200
-        # Provides 2× detail preservation vs 4096 while staying within memory limits
-        # Optimized for high-resolution (128^3) training at base_channels=64
-        bottleneck_dim = 8192
+        # Use 4096 bottleneck optimized for 128^3 with FP16 training
+        # Balances spatial information flow with H200 memory constraints
+        # Enables 128^3 resolution at base_channels=32 with Adam optimizer
+        bottleneck_dim = 4096
         
         # Fully connected layers with bottleneck
         self.fc = nn.Sequential(
