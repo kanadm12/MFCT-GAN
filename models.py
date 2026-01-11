@@ -401,6 +401,13 @@ class MFCT_GAN_Generator(nn.Module):
         self.scm_skip1 = SkipConnectionModification(in_channels=base_channels * 2, spatial_size=32)
         self.scm_skip2 = SkipConnectionModification(in_channels=base_channels, spatial_size=64)
         self.scm_skip3 = SkipConnectionModification(in_channels=base_channels // 2, spatial_size=128)
+        
+        # Feature fusion and 3D decoder
+        self.decoder_3d = Decoder3D(
+            in_channels=base_channels * 4, 
+            base_channels=base_channels,
+            target_size=ct_volume_size
+        )
 
     def forward(self, x_ray1, x_ray2):
         """
