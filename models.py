@@ -163,9 +163,9 @@ class Encoder2D(nn.Module):
 
 
 class TransitionBlock(nn.Module):
-    """Transition block that expands 2D features to 3D using progressive learned depth expansion.
-    Uses stacked ConvTranspose3d layers with small kernels to avoid parameter explosion.
-    This eliminates striping artifacts by generating unique features at each depth level.
+    """Transition block that expands 2D features to 3D using trilinear interpolation.
+    Uses interpolation (no parameters, memory efficient) + lightweight 3D convs.
+    This eliminates striping artifacts while keeping memory/compute manageable.
     """
     def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
@@ -173,75 +173,59 @@ class TransitionBlock(nn.Module):
         self.spatial_size = spatial_size
         self.output_channels = output_channels
         
-        # Progressive depth expansion using multiple small transposed convs
-        # This avoids the parameter explosion from large kernel sizes
-        # Expand gradually: 1 -> 4 -> 16 -> 64 -> spatial_size
-        layers = []
-        current_depth = 1
-        current_channels = in_channels
+        # Channel adjustment if needed (before interpolation)
+        if in_channels != output_channels:
+            self.channel_adjust = nn.Conv2d(in_channels, output_channels, kernel_size=1)
+        else:
+            self.channel_adjust = None
         
-        while current_depth < spatial_size:
-            # Expand by factor of 4 each time (or remaining if less)
-            if current_depth * 4 <= spatial_size:
-                next_depth = current_depth * 4
-                kernel_d = 4
-                stride_d = 4
-            else:
-                next_depth = spatial_size
-                kernel_d = spatial_size // current_depth
-                stride_d = spatial_size // current_depth
-            
-            # Gradually reduce channels toward output_channels
-            if current_depth == 1:
-                next_channels = (in_channels + output_channels) // 2
-            elif next_depth >= spatial_size:
-                next_channels = output_channels
-            else:
-                next_channels = current_channels
-            
-            layers.extend([
-                nn.ConvTranspose3d(
-                    current_channels,
-                    next_channels,
-                    kernel_size=(kernel_d, 3, 3),
-                    stride=(stride_d, 1, 1),
-                    padding=(0, 1, 1),
-                    output_padding=(0, 0, 0)
-                ),
-                nn.BatchNorm3d(next_channels),
-                nn.ReLU(inplace=True)
-            ])
-            
-            current_depth = next_depth
-            current_channels = next_channels
-        
-        self.depth_expander = nn.Sequential(*layers)
-        
-        # Additional 3D refinement to smooth and enhance features
-        self.refine = nn.Sequential(
-            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1),
+        # Lightweight depth-wise separable 3D convs to learn depth variations
+        # Depth-wise: each channel processed independently (low memory)
+        self.depth_conv = nn.Sequential(
+            # Depth-wise convolution
+            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1, groups=output_channels),
             nn.BatchNorm3d(output_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1),
+            # Point-wise convolution to mix channels
+            nn.Conv3d(output_channels, output_channels, kernel_size=1),
+            nn.BatchNorm3d(output_channels),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Additional refinement layer
+        self.refine = nn.Sequential(
+            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1, groups=output_channels),
+            nn.BatchNorm3d(output_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(output_channels, output_channels, kernel_size=1),
             nn.BatchNorm3d(output_channels),
             nn.ReLU(inplace=True)
         )
 
     def forward(self, x):
         """
-        Expand 2D features to 3D using progressive learned depth expansion
+        Expand 2D features to 3D using trilinear interpolation + learned refinement
         Args:
             x: (B, C, H, W) 2D features
         Returns:
-            x: (B, C_out, D, H, W) 3D features with learned depth variation
+            x: (B, C_out, D, H, W) 3D features with smooth depth variation
         """
+        # Adjust channels if needed
+        if self.channel_adjust is not None:
+            x = self.channel_adjust(x)
+        
         # Add singleton depth dimension: (B, C, H, W) -> (B, C, 1, H, W)
         x = x.unsqueeze(2)
         
-        # Progressive depth expansion: (B, C, 1, H, W) -> (B, C_out, D, H, W)
-        x = self.depth_expander(x)
+        # Trilinear interpolation for smooth depth expansion (no parameters, memory efficient!)
+        # (B, C, 1, H, W) -> (B, C, D, H, W)
+        x = F.interpolate(x, size=(self.spatial_size, self.spatial_size, self.spatial_size), 
+                         mode='trilinear', align_corners=False)
         
-        # Refine 3D features
+        # Learn depth variations with lightweight depth-wise convs
+        x = self.depth_conv(x)
+        
+        # Additional refinement
         x = self.refine(x)
         
         return x
