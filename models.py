@@ -163,9 +163,9 @@ class Encoder2D(nn.Module):
 
 
 class TransitionBlock(nn.Module):
-    """Transition block to convert 2D features to 3D using fully connected layer
-    As specified in MFCT-GAN paper: flatten -> FC -> reshape to 3D
-    Uses bottleneck FC for memory efficiency
+    """Transition block to convert 2D features to 3D by duplicating feature maps
+    As specified in MFCT-GAN paper: "expanding the two dimensional to three-dimensional 
+    by duplicating the feature maps"
     """
     def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
@@ -173,37 +173,27 @@ class TransitionBlock(nn.Module):
         self.spatial_size = spatial_size
         self.output_channels = output_channels
         
-        # Calculate flattened size (from 2D features at spatial_size)
-        self.flatten_size = in_channels * spatial_size * spatial_size
-        
-        # Calculate target 3D size
-        self.target_3d_size = output_channels * spatial_size * spatial_size * spatial_size
-        
-        # Use 4096 bottleneck optimized for 128^3 with FP16 training
-        # Balances spatial information flow with H200 memory constraints
-        # Enables 128^3 resolution at base_channels=32 with Adam optimizer
-        bottleneck_dim = 4096
-        
-        # Fully connected layers with bottleneck
-        self.fc = nn.Sequential(
-            nn.Linear(self.flatten_size, bottleneck_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(bottleneck_dim, self.target_3d_size),
-            nn.ReLU(inplace=True)
-        )
+        # Conv layer to adjust channels if needed
+        if in_channels != output_channels:
+            self.channel_adjust = nn.Conv2d(in_channels, output_channels, kernel_size=1)
+        else:
+            self.channel_adjust = None
 
     def forward(self, x):
-        batch_size = x.shape[0]
+        """
+        Expand 2D features to 3D by duplicating along depth dimension
+        Args:
+            x: (B, C, H, W) 2D features
+        Returns:
+            x: (B, C', D, H, W) 3D features where D=H=W
+        """
+        # Adjust channels if needed
+        if self.channel_adjust is not None:
+            x = self.channel_adjust(x)
         
-        # Flatten 2D features: (B, C, H, W) -> (B, C*H*W)
-        x = x.view(batch_size, -1)
-        
-        # Fully connected layer
-        x = self.fc(x)
-        
-        # Reshape to 3D: (B, C*D*H*W) -> (B, C, D, H, W)
-        x = x.view(batch_size, self.output_channels, self.spatial_size, self.spatial_size, self.spatial_size)
+        # Expand 2D -> 3D by duplicating along depth dimension
+        # (B, C, H, W) -> (B, C, 1, H, W) -> (B, C, D, H, W)
+        x = x.unsqueeze(2).repeat(1, 1, self.spatial_size, 1, 1)
         
         return x
 
