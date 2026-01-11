@@ -327,7 +327,7 @@ class MFCT_GAN_Trainer:
         print(f"Checkpoint loaded from {checkpoint_path}")
         return checkpoint['epoch']
 
-    def fit(self, train_loader, val_loader=None, num_epochs=100, checkpoint_dir='./checkpoints'):
+    def fit(self, train_loader, val_loader=None, num_epochs=100, checkpoint_dir='./checkpoints', start_epoch=0):
         """
         Train the model for multiple epochs
         
@@ -336,11 +336,12 @@ class MFCT_GAN_Trainer:
             val_loader: DataLoader for validation data (optional)
             num_epochs: Number of epochs to train
             checkpoint_dir: Directory to save checkpoints
+            start_epoch: Starting epoch (for resuming training)
         """
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.init_tensorboard()
         
-        for epoch in range(num_epochs):
+        for epoch in range(start_epoch, num_epochs):
             # Training
             train_losses = self.train_epoch(train_loader, epoch)
             print(f"\nEpoch {epoch} - Train Losses:")

@@ -62,10 +62,25 @@ def main(args):
         use_amp=args.use_amp,
     )
     
-    # Load checkpoint if provided
-    if args.checkpoint:
+    # Auto-resume from best checkpoint or load specified checkpoint
+    start_epoch = 0
+    if args.resume:
+        # Try to load best PSNR model first
+        best_psnr_path = os.path.join(args.checkpoint_dir, 'best_psnr_model.pt')
+        if os.path.exists(best_psnr_path):
+            print(f"Resuming from best PSNR checkpoint: {best_psnr_path}")
+            checkpoint = torch.load(best_psnr_path, map_location=device)
+            trainer.load_checkpoint(best_psnr_path)
+            start_epoch = checkpoint.get('epoch', 0) + 1
+            print(f"Resuming from epoch {start_epoch}")
+        else:
+            print("No checkpoint found to resume from, starting fresh")
+    elif args.checkpoint:
         print(f"Loading checkpoint from {args.checkpoint}")
+        checkpoint = torch.load(args.checkpoint, map_location=device)
         trainer.load_checkpoint(args.checkpoint)
+        start_epoch = checkpoint.get('epoch', 0) + 1
+        print(f"Resuming from epoch {start_epoch}")
     
     # Create dataloaders
     print("Creating dataloaders...")
@@ -93,6 +108,7 @@ def main(args):
         val_loader=val_loader,
         num_epochs=args.num_epochs,
         checkpoint_dir=args.checkpoint_dir,
+        start_epoch=start_epoch,
     )
     
     print("Training completed!")
@@ -160,6 +176,8 @@ if __name__ == '__main__':
     # Checkpoint and logging
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='Path to checkpoint to load')
+    parser.add_argument('--resume', action='store_true',
+                        help='Resume training from best checkpoint in checkpoint_dir')
     parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints',
                         help='Directory to save checkpoints')
     parser.add_argument('--log_dir', type=str, default='./runs',
