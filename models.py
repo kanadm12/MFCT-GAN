@@ -324,17 +324,21 @@ class Decoder3D(nn.Module):
             nn.Tanh()  # Output in range [-1, 1]
         )
 
-    def forward(self, x, skip_connections=None):
-        # Progressive upsampling with channel reduction and optional skip connections
+    def forward(self, x, skip_connections_3d=None):
+        # Progressive upsampling with skip connections
         for i, layer_dict in enumerate(self.layers):
             x = layer_dict['reduce'](x)
             x = layer_dict['basic3d'](x)
             x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
             
-            # Add skip connections if provided (from encoder)
-            # Note: Skip connections would need to be converted to 3D and matched in size
-            # For now, we keep the architecture working without them for stability
-            # TODO: Properly integrate skip connections from 2D encoder
+            # Add skip connections if provided (already converted to 3D via SCM)
+            if skip_connections_3d is not None and i < len(skip_connections_3d):
+                skip_3d = skip_connections_3d[i]
+                # Resize skip connection to match current feature map size
+                if skip_3d.shape != x.shape:
+                    skip_3d = F.interpolate(skip_3d, size=x.shape[2:], mode='trilinear', align_corners=False)
+                # Concatenate skip connection
+                x = x + skip_3d  # Use addition instead of concatenation for simplicity
         
         # Final convolution
         x = self.final(x)
@@ -388,8 +392,10 @@ class MFCT_GAN_Generator(nn.Module):
             in_channels=base_channels * 8, spatial_size=16, output_channels=base_channels * 4
         )
 
-        # Skip Connection Modification module
-        self.scm = SkipConnectionModification(in_channels=base_channels * 4)
+        # Skip Connection Modification modules for each skip level
+        self.scm_skip1 = SkipConnectionModification(in_channels=base_channels * 4, spatial_size=32)
+        self.scm_skip2 = SkipConnectionModification(in_channels=base_channels * 2, spatial_size=64)
+        self.scm_skip3 = SkipConnectionModification(in_channels=base_channels, spatial_size=128)
 
         # Feature fusion and 3D decoder
         self.decoder_3d = Decoder3D(
@@ -397,6 +403,11 @@ class MFCT_GAN_Generator(nn.Module):
             base_channels=base_channels,
             target_size=ct_volume_size
         )
+        
+        # Transition blocks for skip connections (2D to 3D)
+        self.skip_transition1 = TransitionBlock(base_channels * 4, 32, base_channels * 2)
+        self.skip_transition2 = TransitionBlock(base_channels * 2, 64, base_channels)
+        self.skip_transition3 = TransitionBlock(base_channels, 128, base_channels // 2)
 
     def forward(self, x_ray1, x_ray2):
         """
@@ -423,14 +434,23 @@ class MFCT_GAN_Generator(nn.Module):
             features_3d_2, size=(initial_size, initial_size, initial_size), mode="trilinear", align_corners=False
         )
 
-        # Apply Skip Connection Modification using second X-ray as weight map
-        features_3d_1 = self.scm(features_3d_1, x_ray2)
+        # Convert skip connections from 2D to 3D using SCM with second X-ray as weight map
+        skip1_3d = self.skip_transition1(skip1[0])  # (B, C*4, 32, 32) -> (B, C*2, 32, 32, 32)
+        skip1_3d = self.scm_skip1(skip1_3d, x_ray2)
+        
+        skip2_3d = self.skip_transition2(skip1[1])  # (B, C*2, 64, 64) -> (B, C, 64, 64, 64)
+        skip2_3d = self.scm_skip2(skip2_3d, x_ray2)
+        
+        skip3_3d = self.skip_transition3(skip1[2])  # (B, C, 128, 128) -> (B, C//2, 128, 128, 128)
+        skip3_3d = self.scm_skip3(skip3_3d, x_ray2)
+        
+        skip_connections_3d = [skip1_3d, skip2_3d, skip3_3d]
 
         # Feature fusion by averaging
         fused_features = (features_3d_1 + features_3d_2) / 2.0
 
-        # 3D upsampling decoder
-        ct_volume = self.decoder_3d(fused_features)
+        # 3D upsampling decoder with skip connections
+        ct_volume = self.decoder_3d(fused_features, skip_connections_3d)
 
         return ct_volume
 
