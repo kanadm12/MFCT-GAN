@@ -296,14 +296,18 @@ class Decoder3D(nn.Module):
         import math
         self.num_upsamples = int(math.log2(target_size // 16))
         
-        # Build decoder layers dynamically
+        # Build decoder layers dynamically with U-Net skip connections
         self.layers = nn.ModuleList()
         current_channels = in_channels
+        
+        # Expected skip connection channels (from encoder)
+        # skip[0]: base_channels * 2, skip[1]: base_channels, skip[2]: base_channels // 2
+        skip_channels = [base_channels * 2, base_channels, base_channels // 2]
         
         for i in range(self.num_upsamples):
             next_channels = max(base_channels // (2 ** i), 4)
             
-            # Reduce channels
+            # Reduce channels before concatenation
             reduce = nn.Sequential(
                 nn.Conv3d(current_channels, next_channels, kernel_size=1),
                 nn.BatchNorm3d(next_channels),
@@ -311,9 +315,21 @@ class Decoder3D(nn.Module):
             )
             basic3d = Basic3DBlock(next_channels, next_channels)
             
+            # 1x1x1 conv to reduce concatenated channels back after skip connection
+            # After concat: next_channels + skip_channels[i] -> next_channels
+            if i < len(skip_channels):
+                skip_reduce = nn.Sequential(
+                    nn.Conv3d(next_channels + skip_channels[i], next_channels, kernel_size=1),
+                    nn.BatchNorm3d(next_channels),
+                    nn.ReLU(inplace=True)
+                )
+            else:
+                skip_reduce = None
+            
             self.layers.append(nn.ModuleDict({
                 'reduce': reduce,
-                'basic3d': basic3d
+                'basic3d': basic3d,
+                'skip_reduce': skip_reduce
             }))
             
             current_channels = next_channels
@@ -325,25 +341,24 @@ class Decoder3D(nn.Module):
         )
 
     def forward(self, x, skip_connections_3d=None):
-        # Progressive upsampling with skip connections
+        # Progressive upsampling with U-Net style skip connections (concatenation)
         for i, layer_dict in enumerate(self.layers):
             x = layer_dict['reduce'](x)
             x = layer_dict['basic3d'](x)
             x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
             
-            # Add skip connections if provided (already converted to 3D via SCM)
-            if skip_connections_3d is not None and i < len(skip_connections_3d):
+            # Concatenate skip connections if provided (U-Net style)
+            if skip_connections_3d is not None and i < len(skip_connections_3d) and layer_dict['skip_reduce'] is not None:
                 skip_3d = skip_connections_3d[i]
                 # Resize skip connection to match current feature map spatial size
                 if skip_3d.shape[2:] != x.shape[2:]:
                     skip_3d = F.interpolate(skip_3d, size=x.shape[2:], mode='trilinear', align_corners=False)
-                # Match channels if needed using 1x1x1 convolution
-                if skip_3d.shape[1] != x.shape[1]:
-                    skip_3d = F.conv3d(skip_3d, 
-                                      torch.ones(x.shape[1], skip_3d.shape[1], 1, 1, 1, device=x.device) / skip_3d.shape[1],
-                                      bias=None)
-                # Add skip connection
-                x = x + skip_3d
+                
+                # Concatenate along channel dimension (U-Net standard)
+                x = torch.cat([x, skip_3d], dim=1)
+                
+                # Reduce channels back using 1x1x1 convolution
+                x = layer_dict['skip_reduce'](x)
         
         # Final convolution
         x = self.final(x)
