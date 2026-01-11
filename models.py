@@ -163,8 +163,9 @@ class Encoder2D(nn.Module):
 
 
 class TransitionBlock(nn.Module):
-    """Transition block to convert 2D features to 3D by duplicating feature maps
-    Then applies 3D convolutions to learn depth variations and break striping artifacts
+    """Transition block that expands 2D features to 3D using learned deconvolution.
+    Uses ConvTranspose3d to LEARN depth variation instead of simple duplication.
+    This eliminates striping artifacts by generating unique features at each depth level.
     """
     def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
@@ -172,14 +173,23 @@ class TransitionBlock(nn.Module):
         self.spatial_size = spatial_size
         self.output_channels = output_channels
         
-        # Conv layer to adjust channels if needed
-        if in_channels != output_channels:
-            self.channel_adjust = nn.Conv2d(in_channels, output_channels, kernel_size=1)
-        else:
-            self.channel_adjust = None
+        # Learnable depth expansion using 3D transposed convolution
+        # Expands only along depth dimension (D), keeps H and W unchanged
+        self.depth_expander = nn.Sequential(
+            nn.ConvTranspose3d(
+                in_channels, 
+                output_channels,
+                kernel_size=(spatial_size, 3, 3),  # Expand depth, refine spatial
+                stride=(spatial_size, 1, 1),        # Only stride in depth dimension
+                padding=(0, 1, 1),                  # Keep H, W same size
+                output_padding=(0, 0, 0)
+            ),
+            nn.BatchNorm3d(output_channels),
+            nn.ReLU(inplace=True)
+        )
         
-        # 3D convolutions to break striping and learn depth variations
-        self.conv3d = nn.Sequential(
+        # Additional 3D refinement to smooth and enhance features
+        self.refine = nn.Sequential(
             nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1),
             nn.BatchNorm3d(output_channels),
             nn.ReLU(inplace=True),
@@ -190,23 +200,20 @@ class TransitionBlock(nn.Module):
 
     def forward(self, x):
         """
-        Expand 2D features to 3D by duplicating along depth dimension
-        Then refine with 3D convolutions to create proper depth structure
+        Expand 2D features to 3D using learned depth expansion
         Args:
             x: (B, C, H, W) 2D features
         Returns:
-            x: (B, C', D, H, W) 3D features where D=H=W
+            x: (B, C_out, D, H, W) 3D features with learned depth variation
         """
-        # Adjust channels if needed
-        if self.channel_adjust is not None:
-            x = self.channel_adjust(x)
+        # Add singleton depth dimension: (B, C, H, W) -> (B, C, 1, H, W)
+        x = x.unsqueeze(2)
         
-        # Expand 2D -> 3D by duplicating along depth dimension
-        # (B, C, H, W) -> (B, C, 1, H, W) -> (B, C, D, H, W)
-        x = x.unsqueeze(2).repeat(1, 1, self.spatial_size, 1, 1)
+        # Learn depth expansion: (B, C, 1, H, W) -> (B, C_out, D, H, W)
+        x = self.depth_expander(x)
         
-        # Apply 3D convolutions to learn depth variations and break striping
-        x = self.conv3d(x)
+        # Refine 3D features
+        x = self.refine(x)
         
         return x
 
