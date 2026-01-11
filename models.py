@@ -164,8 +164,8 @@ class Encoder2D(nn.Module):
 
 class TransitionBlock(nn.Module):
     """Transition block that expands 2D features to 3D using trilinear interpolation.
-    Uses interpolation (no parameters, memory efficient) + lightweight 3D convs.
-    This eliminates striping artifacts while keeping memory/compute manageable.
+    Ultra-lightweight version: interpolation only + single 1x1x1 conv for channel adjustment.
+    Eliminates striping through smooth interpolation while minimizing memory.
     """
     def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
@@ -173,60 +173,31 @@ class TransitionBlock(nn.Module):
         self.spatial_size = spatial_size
         self.output_channels = output_channels
         
-        # Channel adjustment if needed (before interpolation)
-        if in_channels != output_channels:
-            self.channel_adjust = nn.Conv2d(in_channels, output_channels, kernel_size=1)
-        else:
-            self.channel_adjust = None
-        
-        # Lightweight depth-wise separable 3D convs to learn depth variations
-        # Depth-wise: each channel processed independently (low memory)
-        self.depth_conv = nn.Sequential(
-            # Depth-wise convolution
-            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1, groups=output_channels),
-            nn.BatchNorm3d(output_channels),
-            nn.ReLU(inplace=True),
-            # Point-wise convolution to mix channels
-            nn.Conv3d(output_channels, output_channels, kernel_size=1),
-            nn.BatchNorm3d(output_channels),
-            nn.ReLU(inplace=True)
-        )
-        
-        # Additional refinement layer
-        self.refine = nn.Sequential(
-            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1, groups=output_channels),
-            nn.BatchNorm3d(output_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(output_channels, output_channels, kernel_size=1),
+        # Single 1x1x1 conv for channel adjustment (minimal memory overhead)
+        self.adjust = nn.Sequential(
+            nn.Conv3d(in_channels, output_channels, kernel_size=1),
             nn.BatchNorm3d(output_channels),
             nn.ReLU(inplace=True)
         )
 
     def forward(self, x):
         """
-        Expand 2D features to 3D using trilinear interpolation + learned refinement
+        Expand 2D features to 3D using trilinear interpolation
         Args:
             x: (B, C, H, W) 2D features
         Returns:
             x: (B, C_out, D, H, W) 3D features with smooth depth variation
         """
-        # Adjust channels if needed
-        if self.channel_adjust is not None:
-            x = self.channel_adjust(x)
-        
         # Add singleton depth dimension: (B, C, H, W) -> (B, C, 1, H, W)
         x = x.unsqueeze(2)
         
-        # Trilinear interpolation for smooth depth expansion (no parameters, memory efficient!)
+        # Trilinear interpolation for smooth depth expansion
         # (B, C, 1, H, W) -> (B, C, D, H, W)
         x = F.interpolate(x, size=(self.spatial_size, self.spatial_size, self.spatial_size), 
                          mode='trilinear', align_corners=False)
         
-        # Learn depth variations with lightweight depth-wise convs
-        x = self.depth_conv(x)
-        
-        # Additional refinement
-        x = self.refine(x)
+        # Channel adjustment with 1x1x1 conv (lightweight)
+        x = self.adjust(x)
         
         return x
 
