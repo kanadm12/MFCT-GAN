@@ -164,8 +164,7 @@ class Encoder2D(nn.Module):
 
 class TransitionBlock(nn.Module):
     """Transition block to convert 2D features to 3D by duplicating feature maps
-    As specified in MFCT-GAN paper: "expanding the two dimensional to three-dimensional 
-    by duplicating the feature maps"
+    Then applies 3D convolutions to learn depth variations and break striping artifacts
     """
     def __init__(self, in_channels=256, spatial_size=16, output_channels=128):
         super(TransitionBlock, self).__init__()
@@ -178,10 +177,21 @@ class TransitionBlock(nn.Module):
             self.channel_adjust = nn.Conv2d(in_channels, output_channels, kernel_size=1)
         else:
             self.channel_adjust = None
+        
+        # 3D convolutions to break striping and learn depth variations
+        self.conv3d = nn.Sequential(
+            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1),
+            nn.BatchNorm3d(output_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(output_channels, output_channels, kernel_size=3, padding=1),
+            nn.BatchNorm3d(output_channels),
+            nn.ReLU(inplace=True)
+        )
 
     def forward(self, x):
         """
         Expand 2D features to 3D by duplicating along depth dimension
+        Then refine with 3D convolutions to create proper depth structure
         Args:
             x: (B, C, H, W) 2D features
         Returns:
@@ -194,6 +204,9 @@ class TransitionBlock(nn.Module):
         # Expand 2D -> 3D by duplicating along depth dimension
         # (B, C, H, W) -> (B, C, 1, H, W) -> (B, C, D, H, W)
         x = x.unsqueeze(2).repeat(1, 1, self.spatial_size, 1, 1)
+        
+        # Apply 3D convolutions to learn depth variations and break striping
+        x = self.conv3d(x)
         
         return x
 
