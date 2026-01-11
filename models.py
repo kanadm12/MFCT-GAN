@@ -334,11 +334,16 @@ class Decoder3D(nn.Module):
             # Add skip connections if provided (already converted to 3D via SCM)
             if skip_connections_3d is not None and i < len(skip_connections_3d):
                 skip_3d = skip_connections_3d[i]
-                # Resize skip connection to match current feature map size
-                if skip_3d.shape != x.shape:
+                # Resize skip connection to match current feature map spatial size
+                if skip_3d.shape[2:] != x.shape[2:]:
                     skip_3d = F.interpolate(skip_3d, size=x.shape[2:], mode='trilinear', align_corners=False)
-                # Concatenate skip connection
-                x = x + skip_3d  # Use addition instead of concatenation for simplicity
+                # Match channels if needed using 1x1x1 convolution
+                if skip_3d.shape[1] != x.shape[1]:
+                    skip_3d = F.conv3d(skip_3d, 
+                                      torch.ones(x.shape[1], skip_3d.shape[1], 1, 1, 1, device=x.device) / skip_3d.shape[1],
+                                      bias=None)
+                # Add skip connection
+                x = x + skip_3d
         
         # Final convolution
         x = self.final(x)
